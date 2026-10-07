@@ -31,6 +31,7 @@ See the [Backing & Hacking blog post](https://www.kickstarter.com/backing-and-ha
     - [Allow2Ban](#allow2ban)
   - [Throttling](#throttling)
     - [`throttle(name, options, &block)`](#throttlename-options-block)
+    - [Counting classified responses instead of requests](#counting-classified-responses-instead-of-requests)
   - [Tracks](#tracks)
   - [Cache store configuration](#cache-store-configuration)
 - [Customizing responses](#customizing-responses)
@@ -275,6 +276,39 @@ Rack::Attack.throttle('request per ip', limit: limit_proc, period: period_proc) 
   request.ip
 end
 ```
+
+#### Counting classified responses instead of requests
+
+By default a throttle counts every matching request when it arrives. For things like login protection you usually want the opposite: only *failed* attempts should consume the quota, while successful logins stay free. Passing `count_on: :response` together with a `classify_response` classifier switches the throttle to response classification counting:
+
+```ruby
+# Allow 5 failed logins per minute per email; successful logins don't count.
+Rack::Attack.throttle('failed logins per email', limit: 5, period: 60,
+  count_on: :response,
+  classify_response: ->(req, status, headers) { status == 401 }) do |req|
+  req.params['email'].to_s.downcase.gsub(/\s+/, "") if req.path == '/login' && req.post?
+end
+```
+
+In this mode the throttle checks the number of *already completed, counted* responses when the request enters, and blocks once that reaches `limit`. After the app responds, the classifier runs exactly once with `(request, status, headers)` and decides whether this request counts. Note that because counting happens on completion, requests that already entered concurrently are not held to a strict limit; only settled responses consume quota.
+
+The response body is streamed through untouched and is never buffered for classification; the classifier only receives the status and headers. Three error paths have their own, independently configurable classifications, each accepting a boolean or a callable `(request, error)` (all default to `false`, i.e. don't count):
+
+* `on_app_error` - the app raised instead of returning a response.
+* `on_body_error` - the response body raised while streaming.
+* `on_classifier_error` - the `classify_response` classifier itself raised.
+
+```ruby
+Rack::Attack.throttle('failed logins per email', limit: 5, period: 60,
+  count_on: :response,
+  classify_response: ->(req, status, headers) { status == 401 },
+  on_app_error: true, # count 500s as failures too
+  on_body_error: ->(req, error) { error.is_a?(SomeExpectedError) }) do |req|
+  # ...
+end
+```
+
+By default a count belongs to the cache window in which the request *started* (`count_window: :start`). Pass `count_window: :finish` to count it in the window in which the response completed instead. The chosen window is fixed per throttle; the entry check and the count never mix timestamps from different windows.
 
 ### Tracks
 

@@ -31,9 +31,21 @@ module Rack
         end
       end
 
-      def count(unprefixed_key, period)
-        key, expires_in = key_and_expiry(unprefixed_key, period)
+      def count(unprefixed_key, period, epoch_time: nil)
+        key, expires_in = key_and_expiry(unprefixed_key, period, epoch_time)
         do_count(key, expires_in)
+      end
+
+      # Returns the current count for the given key and period without
+      # incrementing it. Used by throttles that count classified responses
+      # after the app has run, where the check at request time must not
+      # consume quota itself.
+      def peek_count(unprefixed_key, period, epoch_time: nil)
+        raise Rack::Attack::MissingStoreError if store.nil?
+
+        key, _expires_in = key_and_expiry(unprefixed_key, period, epoch_time)
+        value = store.read(key)
+        value ? value.to_i : 0
       end
 
       def read(unprefixed_key)
@@ -70,10 +82,13 @@ module Rack
 
       private
 
-      def key_and_expiry(unprefixed_key, period)
-        @last_epoch_time = Time.now.to_i
+      def key_and_expiry(unprefixed_key, period, epoch_time = nil)
+        @last_epoch_time = (epoch_time || Time.now.to_i).to_i
         # Add 1 to expires_in to avoid timing error: https://github.com/rack/rack-attack/pull/85
         expires_in = (period - (@last_epoch_time % period) + 1).to_i
+        # An explicitly passed epoch_time may belong to a window that is
+        # (almost) over; never write with a non-positive expiry.
+        expires_in = 1 if expires_in < 1
         ["#{prefix}:#{(@last_epoch_time / period).to_i}:#{unprefixed_key}", expires_in]
       end
 

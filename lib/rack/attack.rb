@@ -26,6 +26,8 @@ module Rack
 
     autoload :Check,                'rack/attack/check'
     autoload :Throttle,             'rack/attack/throttle'
+    autoload :ResponseCounter,      'rack/attack/response_counter'
+    autoload :ResponseCountingBody, 'rack/attack/response_counting_body'
     autoload :Safelist,             'rack/attack/safelist'
     autoload :Blocklist,            'rack/attack/blocklist'
     autoload :Track,                'rack/attack/track'
@@ -126,8 +128,30 @@ module Rack
         end
       else
         configuration.tracked?(request)
-        @app.call(env)
+        call_app(request)
       end
+    end
+
+    private
+
+    # Runs the app, settling any pending response-classified throttle
+    # counts registered while checking throttles. If the app raises, the
+    # :on_app_error classification decides before the error propagates.
+    # Otherwise the response body is wrapped so the classification happens
+    # once the response has been delivered (or failed mid-stream), without
+    # buffering the body.
+    def call_app(request)
+      counters = request.env['rack.attack.response_counters']
+      return @app.call(request.env) if counters.nil? || counters.empty?
+
+      begin
+        status, headers, body = @app.call(request.env)
+      rescue => e
+        counters.each { |counter| counter.settle_error(:app, e) }
+        raise
+      end
+
+      [status, headers, ResponseCountingBody.new(body, counters, status, headers)]
     end
   end
 end
