@@ -276,6 +276,30 @@ Rack::Attack.throttle('request per ip', limit: limit_proc, period: period_proc) 
 end
 ```
 
+#### Counting classified responses with `count_on: :response`
+
+By default a throttle counts every matched request when it enters (`count_on: :request`). When protecting an endpoint such as a login form, you usually want to count only *failed* attempts so that successful logins don't consume the failure quota. With `count_on: :response` the request is checked against the number of already completed failures when it enters, and an explicit classifier decides — once the response terminates — whether this request is counted:
+
+```ruby
+# Throttle failed logins per email to 5 per minute. Successful logins
+# (and any other non-401 response) don't consume the failure quota.
+Rack::Attack.throttle('failed logins per email', limit: 5, period: 60,
+  count_on: :response,
+  classify_response: ->(req, res) { res.status == 401 }) do |req|
+  req.params['email'].to_s.downcase.gsub(/\s+/, "") if req.path == '/login' && req.post?
+end
+```
+
+The following options are available in this mode:
+
+* `classify_response:` (required) — a callable receiving `(request, response)` where `response` exposes `status` and `headers`. It runs exactly once per request, when the response terminates, and a truthy result counts the request. The response body is streamed through untouched and is never read for classification.
+* `count_window:` — `:start` (default) attributes the count to the window in which the request started; `:finish` attributes it to the window in which the response completed. Each operation consistently uses its own window's time; times are never mixed across windows.
+* `on_app_error:` — how to classify the request when the application raises: `:skip` (default), `:count`, or a callable receiving `(request, exception)`.
+* `on_body_error:` — how to classify the request when the response body raises while streaming: `:skip` (default), `:count`, or a callable receiving `(request, exception)`.
+* `on_classifier_error:` — how to classify the request when `classify_response` itself raises: `:skip` (default), `:count`, or a callable receiving `(request, exception)`.
+
+Note that counting happens *after* responses complete. Requests that have already entered concurrently are checked only against completed failures, so the limit is not a hard cap on requests that are already in flight.
+
 ### Tracks
 
 ```ruby

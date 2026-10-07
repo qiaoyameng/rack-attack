@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Add `count_on: :response` throttle mode: requests are checked against already completed failures on entry, and an explicit `classify_response` callable decides — exactly once, when the response terminates — whether the request is counted. Error classification for application errors, late response body errors and classifier errors is independently configurable via `on_app_error`, `on_body_error` and `on_classifier_error`, and window attribution is fixed via `count_window: :start|:finish`
+
 ## [6.8.0] - 2025-10-14
 
 ### Changed

@@ -26,6 +26,7 @@ module Rack
 
     autoload :Check,                'rack/attack/check'
     autoload :Throttle,             'rack/attack/throttle'
+    autoload :ResponseCountingBody, 'rack/attack/response_counting_body'
     autoload :Safelist,             'rack/attack/safelist'
     autoload :Blocklist,            'rack/attack/blocklist'
     autoload :Track,                'rack/attack/track'
@@ -48,6 +49,15 @@ module Rack
 
       def cache
         @cache ||= Cache.new
+      end
+
+      # Drains the response-mode counts registered for the request so each
+      # of them is settled exactly once. Internal use only.
+      def drain_pending_response_counts(request)
+        pending = request.env['rack.attack.pending_response_counts']
+        return [] unless pending
+
+        pending.slice!(0, pending.length)
       end
 
       def clear!
@@ -126,8 +136,31 @@ module Rack
         end
       else
         configuration.tracked?(request)
-        @app.call(env)
+        call_app(env, request)
       end
+    end
+
+    private
+
+    def call_app(env, request)
+      return @app.call(env) unless pending_response_counts?(request)
+
+      begin
+        status, headers, body = @app.call(env)
+      rescue StandardError => e
+        self.class.drain_pending_response_counts(request).each do |pending|
+          pending.throttle.count_app_error!(pending, request, e)
+        end
+        raise
+      end
+
+      response = Throttle::Response.new(status, headers)
+      [status, headers, ResponseCountingBody.new(body, request, response)]
+    end
+
+    def pending_response_counts?(request)
+      pending = request.env['rack.attack.pending_response_counts']
+      pending && !pending.empty?
     end
   end
 end

@@ -31,9 +31,18 @@ module Rack
         end
       end
 
-      def count(unprefixed_key, period)
-        key, expires_in = key_and_expiry(unprefixed_key, period)
+      def count(unprefixed_key, period, epoch_time: nil)
+        key, expires_in = key_and_expiry(unprefixed_key, period, epoch_time: epoch_time)
         do_count(key, expires_in)
+      end
+
+      # Reads the current counter value without incrementing it.
+      def current_count(unprefixed_key, period, epoch_time: nil)
+        key, _expires_in = key_and_expiry(unprefixed_key, period, epoch_time: epoch_time)
+
+        raise Rack::Attack::MissingStoreError if store.nil?
+
+        store.read(key) || 0
       end
 
       def read(unprefixed_key)
@@ -49,7 +58,7 @@ module Rack
       end
 
       def reset_count(unprefixed_key, period)
-        key, _ = key_and_expiry(unprefixed_key, period)
+        key, _ = key_and_expiry(unprefixed_key, period, epoch_time: nil)
         store.delete(key)
       end
 
@@ -70,8 +79,8 @@ module Rack
 
       private
 
-      def key_and_expiry(unprefixed_key, period)
-        @last_epoch_time = Time.now.to_i
+      def key_and_expiry(unprefixed_key, period, epoch_time: nil)
+        @last_epoch_time = (epoch_time || Time.now).to_i
         # Add 1 to expires_in to avoid timing error: https://github.com/rack/rack-attack/pull/85
         expires_in = (period - (@last_epoch_time % period) + 1).to_i
         ["#{prefix}:#{(@last_epoch_time / period).to_i}:#{unprefixed_key}", expires_in]
