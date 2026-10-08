@@ -32,6 +32,7 @@ See the [Backing & Hacking blog post](https://www.kickstarter.com/backing-and-ha
   - [Throttling](#throttling)
     - [`throttle(name, options, &block)`](#throttlename-options-block)
   - [Tracks](#tracks)
+  - [Shadow configuration](#shadow-configuration)
   - [Cache store configuration](#cache-store-configuration)
 - [Customizing responses](#customizing-responses)
   - [RateLimit headers for well-behaved clients](#ratelimit-headers-for-well-behaved-clients)
@@ -298,6 +299,44 @@ ActiveSupport::Notifications.subscribe("track.rack_attack") do |name, start, fin
   end
 end
 ```
+
+### Shadow configuration
+
+Before enabling a new rule set, you can run it in **shadow mode** to observe which requests it would match. The shadow configuration receives the same request facts as the production rules and evaluates its own safelists, blocklists, throttles and tracks in full, but its verdict is only recorded - the response is always decided by the production rules.
+
+```ruby
+# Configure candidate rules. Use a separate cache so shadow counters live in
+# their own namespace and never interfere with production counters.
+Rack::Attack.shadow_cache = ActiveSupport::Cache::MemoryStore.new
+
+Rack::Attack.shadow do
+  blocklist("candidate-block") { |req| req.ip == "1.2.3.4" }
+  throttle("candidate-throttle", limit: 300, period: 60) { |req| req.ip }
+end
+
+# Receive one decision record per request.
+Rack::Attack.shadow_recorder = lambda do |record|
+  Rails.logger.info({ shadow: record })
+end
+```
+
+Without a custom recorder, records are emitted through the notifier as `shadow.rack_attack` events. Each record includes:
+
+- `verdict`: `:allow`, `:block`, `:throttle` or `:unknown`
+- `reason`: `safelist`, `blocklist`, `throttle`, `no_match`, `error` or `recorder_error`
+- `rule_version` / `configuration_version`: the exact rule set version that evaluated the request
+- `matched`, `match_type`, `discriminator`, `match_data`: the matching rule and its data
+
+Guarantees:
+
+- Production safelist/blocklist early returns do not shorten the shadow run; the shadow always evaluates its whole chain.
+- Shadow annotations are written under `rack.attack.shadow.*` keys on an isolated env copy, so they can never overwrite production `rack.attack.*` annotations or the response.
+- Shadow counters use the `rack::attack-shadow` cache prefix, independent of the production `rack::attack` namespace.
+- If the shadow store or recorder raises, the verdict is recorded as `:unknown`; it is never silently treated as an allow, and the production response is unaffected.
+- The request (including `rack.input`) is captured once into an isolated snapshot, so shadow rules cannot drain the body read by production rules or the app.
+- Both configurations are pinned for the duration of a request, so a hot configuration swap cannot make one request use the old version for part of its evaluation and the new version for the rest.
+
+Use `Rack::Attack.clear_shadow_configuration` to remove the shadow rules.
 
 ### Cache store configuration
 

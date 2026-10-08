@@ -3,7 +3,7 @@
 module Rack
   class Attack
     class Safelist < Check
-      def initialize(name = nil, &block)
+      def initialize(name = nil, options = {}, annotation_prefix: Check::DEFAULT_ANNOTATION_PREFIX, &block)
         super
         @type = :safelist
       end

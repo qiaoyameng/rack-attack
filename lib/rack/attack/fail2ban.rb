@@ -50,7 +50,7 @@ module Rack
         end
 
         def cache
-          Rack::Attack.cache
+          Rack::Attack.current_cache
         end
       end
     end

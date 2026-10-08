@@ -7,9 +7,10 @@ module Rack
 
       attr_reader :name, :limit, :period, :block, :type
 
-      def initialize(name, options, &block)
+      def initialize(name, options, annotation_prefix: Check::DEFAULT_ANNOTATION_PREFIX, &block)
         @name = name
         @block = block
+        @annotation_prefix = annotation_prefix
         MANDATORY_OPTIONS.each do |opt|
           raise ArgumentError, "Must pass #{opt.inspect} option" unless options[opt]
         end
@@ -19,10 +20,10 @@ module Rack
       end
 
       def cache
-        Rack::Attack.cache
+        Rack::Attack.current_cache
       end
 
-      def matched_by?(request)
+      def matched_by?(request, instrument: true)
         discriminator = discriminator_for(request)
         return false unless discriminator
 
@@ -43,7 +44,7 @@ module Rack
         (count > current_limit).tap do |throttled|
           if throttled
             annotate_request_with_matched_data(request, data)
-            Rack::Attack.instrument(request)
+            Rack::Attack.instrument(request) if instrument
           end
         end
       end
@@ -67,14 +68,15 @@ module Rack
       end
 
       def annotate_request_with_throttle_data(request, data)
-        (request.env['rack.attack.throttle_data'] ||= {})[name] = data
+        key = "#{@annotation_prefix}.throttle_data"
+        (request.env[key] ||= {})[name] = data
       end
 
       def annotate_request_with_matched_data(request, data)
-        request.env['rack.attack.matched']             = name
-        request.env['rack.attack.match_discriminator'] = data[:discriminator]
-        request.env['rack.attack.match_type']          = type
-        request.env['rack.attack.match_data']          = data
+        request.env["#{@annotation_prefix}.matched"]             = name
+        request.env["#{@annotation_prefix}.match_discriminator"] = data[:discriminator]
+        request.env["#{@annotation_prefix}.match_type"]          = type
+        request.env["#{@annotation_prefix}.match_data"]          = data
       end
     end
   end

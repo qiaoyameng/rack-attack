@@ -3,7 +3,7 @@
 module Rack
   class Attack
     class Blocklist < Check
-      def initialize(name = nil, &block)
+      def initialize(name = nil, options = {}, annotation_prefix: Check::DEFAULT_ANNOTATION_PREFIX, &block)
         super
         @type = :blocklist
       end

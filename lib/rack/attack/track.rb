@@ -5,19 +5,19 @@ module Rack
     class Track
       attr_reader :filter
 
-      def initialize(name, options = {}, &block)
+      def initialize(name, options = {}, annotation_prefix: Check::DEFAULT_ANNOTATION_PREFIX, &block)
         options[:type] = :track
 
         @filter =
           if options[:limit] && options[:period]
-            Throttle.new(name, options, &block)
+            Throttle.new(name, options, annotation_prefix: annotation_prefix, &block)
           else
-            Check.new(name, options, &block)
+            Check.new(name, options, annotation_prefix: annotation_prefix, &block)
           end
       end
 
-      def matched_by?(request)
-        filter.matched_by?(request)
+      def matched_by?(request, instrument: true)
+        filter.matched_by?(request, instrument: instrument)
       end
     end
   end
