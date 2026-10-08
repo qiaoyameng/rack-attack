@@ -33,6 +33,7 @@ See the [Backing & Hacking blog post](https://www.kickstarter.com/backing-and-ha
     - [`throttle(name, options, &block)`](#throttlename-options-block)
   - [Tracks](#tracks)
   - [Cache store configuration](#cache-store-configuration)
+  - [Shadow configuration](#shadow-configuration)
 - [Customizing responses](#customizing-responses)
   - [RateLimit headers for well-behaved clients](#ratelimit-headers-for-well-behaved-clients)
 - [Logging & Instrumentation](#logging--instrumentation)
@@ -313,6 +314,29 @@ Rack::Attack.cache.store = ActiveSupport::Cache::RedisCacheStore.new(url: "...")
 Most applications should use a new, separate database used only for `rack-attack`. During an actual attack or periods of heavy load, this database will come under heavy load. Keeping it on a separate database instance will give you additional resilience and make sure that other functions (like caching for your application) don't go down.
 
 Note that `Rack::Attack.cache` is only used for throttling, allow2ban and fail2ban filtering; not blocklisting and safelisting. Your cache store must implement `increment` and `write` like [ActiveSupport::Cache::Store](http://api.rubyonrails.org/classes/ActiveSupport/Cache/Store.html). This means that other cache stores which inherit from ActiveSupport::Cache::Store are also compatible. In-memory stores which are not backed by an external database, such as `ActiveSupport::Cache::MemoryStore.new`, will be mostly ineffective because each Ruby process in your deployment will have it's own state, effectively multiplying the number of requests each client can make by the number of Ruby processes you have deployed.
+
+### Shadow configuration
+
+`Rack::Attack.shadow` is an independent, read-only rule set used to observe what a new rule *would* do before enforcing it. It evaluates the same request facts as the primary configuration — even when the primary safelist or blocklist returned early — but counts in its own cache namespace (`rack::attack:shadow` by default) and only emits decision records. The response is always decided by the primary configuration alone, and neither side's `env` annotations overwrite the other's.
+
+```ruby
+# config/initializers/rack_attack.rb (for rails apps)
+Rack::Attack.shadow.throttle("logins/ip", limit: 5, period: 1.minute) { |req| req.ip if req.path == "/login" }
+
+Rack::Attack.shadow.recorder = ->(decision) do
+  # decision.decision   => :safelisted, :blocklisted, :throttled, :passed or :unknown
+  # decision.matched    => name of the matched rule (the match reason)
+  # decision.match_type => :safelist, :blocklist, :throttle or :track
+  # decision.match_data => throttle data (count, limit, period, ...) when applicable
+  # decision.version    => the shadow rule version used for this request
+  # decision.error      => the error, when decision is :unknown
+  Rails.logger.info "shadow: #{decision.decision} (#{decision.matched})"
+end
+```
+
+Each request is evaluated against a single snapshot of the shadow rules, so hot-swapping the configuration mid-request never mixes rule versions within one request. The version attached to records defaults to an internal revision bumped on every rule change; assign your own with `Rack::Attack.shadow.version = "deploy-123"`.
+
+Failures never affect the response and are never silently treated as a pass: if the shadow store or evaluation raises, the record's decision is `:unknown`. If the recorder itself raises, a warning is logged and the request proceeds. Use `Rack::Attack.shadow.cache = Rack::Attack::Cache.new(store: ...)` to fully isolate the shadow store from the primary one.
 
 ## Customizing responses
 
